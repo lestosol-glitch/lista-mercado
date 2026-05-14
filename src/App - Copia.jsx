@@ -44,11 +44,11 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const loadStorage = (key, def) => { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; } catch { return def; } };
 const saveStorage = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
 
-// ─── CSS ──────────────────────────────────────────────────────────────────────
+// ─── CSS GLOBAL ───────────────────────────────────────────────────────────────
 const BASE_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow-x: hidden; }
-  input, button { font-family: inherit; }
+  input, button, select { font-family: inherit; }
   ::-webkit-scrollbar { display: none; }
   @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
@@ -56,6 +56,7 @@ const BASE_CSS = `
 `;
 
 // ─── MODAL ────────────────────────────────────────────────────────────────────
+// ⚠️ Não usa variável CSS — recebe a cor via prop para evitar tela preta
 function Modal({ children, onClose, center = false, surfaceColor }) {
   return (
     <div
@@ -104,19 +105,20 @@ export default function App() {
   const [showListModal, setShowListModal] = useState(false);
   const [showItemModal, setShowItemModal] = useState(false);
   const [showCatModal,  setShowCatModal]  = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // lista a deletar
 
-  // Form lista
+  // Formulário lista
   const [listName, setListName]     = useState("");
   const [editListId, setEditListId] = useState(null);
 
-  // Form item (sem quantidade)
+  // Formulário item
   const [editItemId, setEditItemId] = useState(null);
   const [itemName, setItemName]     = useState("");
+  const [itemQty, setItemQty]       = useState("");
   const [itemCat, setItemCat]       = useState("outros");
   const itemNameRef = useRef();
 
-  // Form categoria
+  // Formulário categoria
   const [newCatLabel, setNewCatLabel] = useState("");
   const [newCatEmoji, setNewCatEmoji] = useState("🛍");
   const [newCatColor, setNewCatColor] = useState("#22c55e");
@@ -131,9 +133,9 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  useEffect(() => { saveStorage("mkt_dark", dark); },             [dark]);
+  useEffect(() => { saveStorage("mkt_dark", dark); },         [dark]);
   useEffect(() => { saveStorage("mkt_categories", categories); }, [categories]);
-  useEffect(() => { saveStorage("mkt_archived", archived); },     [archived]);
+  useEffect(() => { saveStorage("mkt_archived", archived); },  [archived]);
 
   // ── Tema ──────────────────────────────────────────────────────────────────
   const T = {
@@ -149,9 +151,10 @@ export default function App() {
   };
 
   // ── Estilos ───────────────────────────────────────────────────────────────
-  const card         = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 18, padding: 16, marginBottom: 12 };
-  const fab          = { position: "fixed", bottom: 24, right: 20, background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, border: "none", borderRadius: 20, padding: "14px 24px", color: "#0f1117", fontSize: 16, fontWeight: 700, boxShadow: "0 8px 28px rgba(110,231,183,.4)", cursor: "pointer", zIndex: 10 };
-  const inputStyle   = { width: "100%", background: T.surface2, border: `1px solid ${T.border}`, borderRadius: 12, color: T.text, fontSize: 16, padding: "12px 14px", outline: "none", marginBottom: 12 };
+  const card = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 18, padding: 16, marginBottom: 12 };
+  const fab  = { position: "fixed", bottom: 24, right: 20, background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, border: "none", borderRadius: 20, padding: "14px 24px", color: "#0f1117", fontSize: 16, fontWeight: 700, boxShadow: "0 8px 28px rgba(110,231,183,.4)", cursor: "pointer", zIndex: 10 };
+
+  const inputStyle = { width: "100%", background: T.surface2, border: `1px solid ${T.border}`, borderRadius: 12, color: T.text, fontSize: 16, padding: "12px 14px", outline: "none", marginBottom: 12 };
   const btnPrimary   = { flex: 1, padding: "13px 0", background: `linear-gradient(135deg, ${T.accent}, ${T.accent2})`, border: "none", borderRadius: 14, color: "#0f1117", fontSize: 15, fontWeight: 700, cursor: "pointer" };
   const btnSecondary = { flex: 1, padding: "13px 0", background: T.surface2, border: `1px solid ${T.border}`, borderRadius: 14, color: T.muted, fontSize: 15, cursor: "pointer" };
   const btnDanger    = { flex: 1, padding: "13px 0", background: T.danger + "22", border: `1px solid ${T.danger}55`, borderRadius: 14, color: T.danger, fontSize: 15, fontWeight: 700, cursor: "pointer" };
@@ -165,7 +168,7 @@ export default function App() {
   const removeList = async (id)   => { await deleteDoc(doc(db, "listas_v3", id)); };
 
   // ── Ações: listas ─────────────────────────────────────────────────────────
-  const openNewList  = () => { setListName(""); setEditListId(null); setShowListModal(true); };
+  const openNewList = () => { setListName(""); setEditListId(null); setShowListModal(true); };
   const openEditList = (list, e) => { e.stopPropagation(); setListName(list.name); setEditListId(list.id); setShowListModal(true); };
 
   const saveList = async () => {
@@ -185,34 +188,34 @@ export default function App() {
     await removeList(list.id);
   };
 
+  // ✅ EXCLUIR lista permanentemente (com confirmação)
   const deleteListPermanently = async (id) => {
     await removeList(id);
     setConfirmDelete(null);
     if (screen === "list") setScreen("home");
   };
 
-  // ── Ações: itens (sem quantidade) ────────────────────────────────────────
+  // ── Ações: itens ──────────────────────────────────────────────────────────
   const openAddItem = () => {
-    setEditItemId(null); setItemName(""); setItemCat("outros");
+    setEditItemId(null); setItemName(""); setItemQty(""); setItemCat("outros");
     setShowItemModal(true);
     setTimeout(() => itemNameRef.current?.focus(), 120);
   };
   const openEditItem = (item) => {
-    setEditItemId(item.id); setItemName(item.name); setItemCat(item.category || "outros");
+    setEditItemId(item.id); setItemName(item.name); setItemQty(item.qty || ""); setItemCat(item.category || "outros");
     setShowItemModal(true);
     setTimeout(() => itemNameRef.current?.focus(), 120);
   };
   const saveItem = async () => {
     if (!itemName.trim() || !activeList) return;
-    const newItem  = { id: editItemId || uid(), name: itemName.trim(), category: itemCat, done: false };
-    const items    = activeList.items || [];
+    const newItem = { id: editItemId || uid(), name: itemName.trim(), qty: itemQty.trim(), category: itemCat, done: false };
+    const items   = activeList.items || [];
     const newItems = editItemId
       ? items.map((i) => i.id === editItemId ? { ...newItem, done: i.done } : i)
       : [...items, newItem];
     await syncList({ ...activeList, items: newItems });
     setShowItemModal(false);
   };
-
   const toggleItem = async (item) => {
     const newItems = activeList.items.map((i) => i.id === item.id ? { ...i, done: !i.done } : i);
     await syncList({ ...activeList, items: newItems });
@@ -286,8 +289,14 @@ export default function App() {
             </button>
           </>
         )}
+
+        {/* ✅ Na tela de lista: botão excluir lista + botão agrupar removido (agrupamento é padrão) */}
         {screen === "list" && activeList && (
-          <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(activeList); }} title="Excluir lista" style={{ background: T.danger + "18", border: `1px solid ${T.danger}44`, borderRadius: 10, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>🗑</button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirmDelete(activeList); }}
+            title="Excluir lista"
+            style={{ background: T.danger + "18", border: `1px solid ${T.danger}44`, borderRadius: 10, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}
+          >🗑</button>
         )}
 
         <button onClick={() => setDark((d) => !d)} style={{ ...iconBtn, fontSize: 20 }}>{dark ? "☀️" : "🌙"}</button>
@@ -308,6 +317,7 @@ export default function App() {
       {/* ── CONTEÚDO ── */}
       <div style={{ padding: "16px 16px 120px" }}>
 
+        {/* Loading */}
         {loading && screen === "home" && (
           <div style={{ textAlign: "center", padding: "60px 20px", opacity: .5 }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>⏳</div>
@@ -354,18 +364,22 @@ export default function App() {
           </>
         )}
 
-        {/* ════ LISTA DE ITENS — agrupado por categoria sempre ════ */}
+        {/* ════ LISTA DE ITENS (✅ agrupado por categoria como padrão) ════ */}
         {screen === "list" && activeList && (() => {
           const items   = activeList.items || [];
           const pending = items.filter((i) => !i.done);
           const done    = items.filter((i) => i.done);
 
-          // Agrupa respeitando a ordem das categorias
+          // Agrupa pendentes por categoria, respeitando a ordem de DEFAULT_CATEGORIES
+          const grouped = {};
+          pending.forEach((i) => {
+            const k = i.category || "outros";
+            if (!grouped[k]) grouped[k] = [];
+            grouped[k].push(i);
+          });
+          // ordena grupos pela ordem das categorias
           const orderedGroups = categories
-            .map((c) => ({
-              cat: c,
-              items: pending.filter((i) => (i.category || "outros") === c.id),
-            }))
+            .map((c) => ({ cat: c, items: grouped[c.id] || [] }))
             .filter((g) => g.items.length > 0);
 
           const ItemRow = ({ item }) => {
@@ -379,6 +393,7 @@ export default function App() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 16, fontWeight: 500, textDecoration: item.done ? "line-through" : "none", color: item.done ? T.muted : T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {item.name}
+                    {item.qty ? <span style={{ color: T.muted, fontSize: 13, fontWeight: 400 }}> · {item.qty}</span> : null}
                   </div>
                 </div>
                 {!item.done && <button onClick={() => openEditItem(item)} style={iconBtn}>✏️</button>}
@@ -397,11 +412,11 @@ export default function App() {
                 </div>
               )}
 
-              {/* Grupos por categoria */}
+              {/* Grupos de categorias (pendentes) */}
               {orderedGroups.map(({ cat, items: catItems }) => (
-                <div key={cat.id} style={{ marginBottom: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 4px 6px" }}>
-                    <div style={{ width: 3, height: 18, background: cat.color, borderRadius: 2, flexShrink: 0 }} />
+                <div key={cat.id} style={{ marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 4px 6px" }}>
+                    <div style={{ width: 3, height: 18, background: cat.color, borderRadius: 2 }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: cat.color }}>{cat.label}</span>
                   </div>
                   {catItems.map((item) => <ItemRow key={item.id} item={item} />)}
@@ -410,7 +425,7 @@ export default function App() {
 
               {/* Comprados */}
               {done.length > 0 && (
-                <div style={{ marginTop: 20 }}>
+                <div style={{ marginTop: 16 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 4px 6px" }}>
                     <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em" }}>✓ Comprados ({done.length})</span>
                     <button onClick={clearDone} style={{ background: "none", border: "none", color: T.danger, fontSize: 12, cursor: "pointer" }}>Limpar</button>
@@ -462,19 +477,20 @@ export default function App() {
           </>
         )}
 
-        {/* ════ CATEGORIAS — sem código hex ════ */}
+        {/* ════ CATEGORIAS ════ */}
         {screen === "categories" && (
           <>
             {categories.map((cat, idx) => (
               <div key={cat.id} style={{ ...card, display: "flex", alignItems: "center", gap: 14, animation: "fadeUp .3s ease both", animationDelay: idx * 30 + "ms" }}>
-                {/* Ícone com cor de fundo */}
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: cat.color + "30", border: `2px solid ${cat.color}66`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, background: cat.color + "30", border: `2px solid ${cat.color}55`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
                   {cat.label.split(" ")[0]}
                 </div>
-                {/* Nome + bolinha colorida (sem hex) */}
-                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: cat.color, flexShrink: 0 }} />
-                  <span style={{ fontSize: 15, fontWeight: 600 }}>{cat.label}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600 }}>{cat.label}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: cat.color }} />
+                    <span style={{ fontSize: 12, color: T.muted }}>{cat.color}</span>
+                  </div>
                 </div>
                 {cat.id !== "outros"
                   ? <button onClick={() => deleteCategory(cat.id)} style={{ ...iconBtn, color: T.danger }}>🗑</button>
@@ -499,38 +515,20 @@ export default function App() {
         </Modal>
       )}
 
-      {/* ══ MODAL: NOVO / EDITAR ITEM (sem quantidade) ══ */}
+      {/* ══ MODAL: NOVO / EDITAR ITEM ══ */}
       {showItemModal && (
         <Modal onClose={() => setShowItemModal(false)} surfaceColor={T.surface}>
           <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 20 }}>{editItemId ? "Editar item" : "Novo item"}</div>
-
           <label style={sectionLabel}>Nome do item *</label>
-          <input
-            ref={itemNameRef}
-            value={itemName}
-            onChange={(e) => setItemName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && saveItem()}
-            placeholder="Ex: Leite, Frango, Detergente..."
-            style={inputStyle}
-          />
-
+          <input ref={itemNameRef} value={itemName} onChange={(e) => setItemName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveItem()} placeholder="Ex: Leite, Frango, Detergente..." style={inputStyle} />
+          <label style={sectionLabel}>Quantidade (opcional)</label>
+          <input value={itemQty} onChange={(e) => setItemQty(e.target.value)} placeholder="Ex: 2, 500g, 1 caixa..." inputMode="numeric" style={inputStyle} />
           <label style={{ ...sectionLabel, marginBottom: 10 }}>Categoria</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
             {categories.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setItemCat(c.id)}
-                style={{
-                  padding: "6px 14px", borderRadius: 999, fontSize: 12,
-                  border: `1px solid ${itemCat === c.id ? c.color : T.border}`,
-                  background: itemCat === c.id ? c.color + "22" : T.surface2,
-                  color: itemCat === c.id ? c.color : T.muted,
-                  cursor: "pointer", transition: "all .15s",
-                }}
-              >{c.label}</button>
+              <button key={c.id} onClick={() => setItemCat(c.id)} style={{ padding: "6px 14px", borderRadius: 999, fontSize: 12, border: `1px solid ${itemCat === c.id ? c.color : T.border}`, background: itemCat === c.id ? c.color + "22" : T.surface2, color: itemCat === c.id ? c.color : T.muted, cursor: "pointer", transition: "all .15s" }}>{c.label}</button>
             ))}
           </div>
-
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setShowItemModal(false)} style={btnSecondary}>Cancelar</button>
             <button onClick={saveItem} style={btnPrimary}>{editItemId ? "Salvar ✓" : "Adicionar ✓"}</button>
@@ -542,32 +540,26 @@ export default function App() {
       {showCatModal && (
         <Modal onClose={() => setShowCatModal(false)} center surfaceColor={T.surface}>
           <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 20 }}>Nova categoria</div>
-
           <label style={sectionLabel}>Nome</label>
           <input value={newCatLabel} onChange={(e) => setNewCatLabel(e.target.value)} placeholder="Ex: Açougue, Pet Shop, Frios..." autoFocus style={inputStyle} />
-
           <label style={sectionLabel}>Emoji</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16, maxHeight: 130, overflowY: "auto", padding: 4 }}>
             {EMOJI_OPTIONS.map((e) => (
               <button key={e} onClick={() => setNewCatEmoji(e)} style={{ width: 38, height: 38, borderRadius: 10, border: `2px solid ${newCatEmoji === e ? T.accent : T.border}`, background: newCatEmoji === e ? T.accent + "22" : T.surface2, fontSize: 18, cursor: "pointer" }}>{e}</button>
             ))}
           </div>
-
           <label style={sectionLabel}>Cor</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
             {COLOR_OPTIONS.map((c) => (
               <button key={c} onClick={() => setNewCatColor(c)} style={{ width: 30, height: 30, borderRadius: "50%", background: c, border: `3px solid ${newCatColor === c ? T.text : "transparent"}`, cursor: "pointer", transition: "border .15s" }} />
             ))}
           </div>
-
-          {/* Preview */}
           <div style={{ background: T.surface2, borderRadius: 12, padding: "10px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 12, color: T.muted }}>Preview:</span>
             <span style={{ fontSize: 13, background: newCatColor + "22", color: newCatColor, borderRadius: 999, padding: "3px 12px", border: `1px solid ${newCatColor}44` }}>
               {newCatEmoji} {newCatLabel || "Nome da categoria"}
             </span>
           </div>
-
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setShowCatModal(false)} style={btnSecondary}>Cancelar</button>
             <button onClick={createCategory} style={btnPrimary}>Criar ✓</button>
@@ -582,7 +574,7 @@ export default function App() {
             <div style={{ fontSize: 42, marginBottom: 12 }}>🗑</div>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Excluir lista?</div>
             <div style={{ fontSize: 14, color: T.muted, lineHeight: 1.5 }}>
-              A lista <strong style={{ color: T.text }}>"{confirmDelete.name}"</strong> será excluída permanentemente.
+              A lista <strong style={{ color: T.text }}>"{confirmDelete.name}"</strong> será excluída permanentemente e não poderá ser recuperada.
             </div>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
