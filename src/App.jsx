@@ -3,12 +3,15 @@ import { initializeApp } from "firebase/app";
 import {
   getFirestore,
   collection,
+  collectionGroup,
   onSnapshot,
   doc,
   setDoc,
   deleteDoc,
   query,
   orderBy,
+  writeBatch,
+  getDocs,
 } from "firebase/firestore";
 
 // ─── FIREBASE ─────────────────────────────────────────────────────────────────
@@ -22,6 +25,13 @@ const firebaseConfig = {
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
+
+// ─── ESTRUTURA DO FIREBASE ────────────────────────────────────────────────────
+// listas_v4/{listaId}              → { name, createdAt }
+// listas_v4/{listaId}/itens/{itemId} → { name, category, done, order, createdAt }
+//
+// Cada item é um documento separado.
+// Assim você e a Débora podem editar ao mesmo tempo SEM conflito.
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
 const DEFAULT_CATEGORIES = [
@@ -75,11 +85,9 @@ function Modal({ children, onClose, center = false, surfaceColor }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: surfaceColor,
-          width: "100%",
-          maxWidth: 520,
+          width: "100%", maxWidth: 520,
           borderRadius: center ? 24 : "24px 24px 0 0",
-          padding: 24,
-          paddingBottom: center ? 24 : 36,
+          padding: 24, paddingBottom: center ? 24 : 36,
           animation: center ? "fadeUp 0.25s ease-out" : "slideUp 0.3s ease-out",
           boxShadow: "0 -4px 48px rgba(0,0,0,0.5)",
         }}
@@ -94,7 +102,8 @@ function Modal({ children, onClose, center = false, surfaceColor }) {
 export default function App() {
   const [dark, setDark]             = useState(() => loadStorage("mkt_dark", true));
   const [lists, setLists]           = useState([]);
-  const [loading, setLoading]       = useState(true);
+  const [itens, setItens]           = useState({}); // { listaId: [itens...] }
+  const [loadingLists, setLoadingLists] = useState(true);
   const [archived, setArchived]     = useState(() => loadStorage("mkt_archived", []));
   const [categories, setCategories] = useState(() => loadStorage("mkt_categories", DEFAULT_CATEGORIES));
   const [screen, setScreen]         = useState("home");
@@ -110,7 +119,7 @@ export default function App() {
   const [listName, setListName]     = useState("");
   const [editListId, setEditListId] = useState(null);
 
-  // Form item (sem quantidade)
+  // Form item
   const [editItemId, setEditItemId] = useState(null);
   const [itemName, setItemName]     = useState("");
   const [itemCat, setItemCat]       = useState("outros");
@@ -121,15 +130,31 @@ export default function App() {
   const [newCatEmoji, setNewCatEmoji] = useState("🛍");
   const [newCatColor, setNewCatColor] = useState("#22c55e");
 
-  // ── Firebase ───────────────────────────────────────────────────────────────
+  // ── Firebase: escuta listas ────────────────────────────────────────────────
   useEffect(() => {
-    const q = query(collection(db, "listas_v3"), orderBy("createdAt", "desc"));
+    const q = query(collection(db, "listas_v4"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       setLists(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
+      setLoadingLists(false);
     });
     return () => unsub();
   }, []);
+
+  // ── Firebase: escuta itens da lista ativa em tempo real ───────────────────
+  useEffect(() => {
+    if (!activeId) return;
+    const q = query(
+      collection(db, "listas_v4", activeId, "itens"),
+      orderBy("createdAt", "asc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setItens((prev) => ({
+        ...prev,
+        [activeId]: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      }));
+    });
+    return () => unsub();
+  }, [activeId]);
 
   useEffect(() => { saveStorage("mkt_dark", dark); },             [dark]);
   useEffect(() => { saveStorage("mkt_categories", categories); }, [categories]);
@@ -161,8 +186,13 @@ export default function App() {
   // ── Helpers ───────────────────────────────────────────────────────────────
   const getCat     = (id) => categories.find((c) => c.id === id) || DEFAULT_CATEGORIES[9];
   const activeList = lists.find((l) => l.id === activeId);
-  const syncList   = async (list) => { await setDoc(doc(db, "listas_v3", list.id), list); };
-  const removeList = async (id)   => { await deleteDoc(doc(db, "listas_v3", id)); };
+  const activeItens = itens[activeId] || [];
+
+  // resumo para mostrar na home (conta itens do estado local)
+  const getListSummary = (listId) => {
+    const its = itens[listId] || [];
+    return { total: its.length, done: its.filter((i) => i.done).length };
+  };
 
   // ── Ações: listas ─────────────────────────────────────────────────────────
   const openNewList  = () => { setListName(""); setEditListId(null); setShowListModal(true); };
@@ -171,27 +201,38 @@ export default function App() {
   const saveList = async () => {
     if (!listName.trim()) return;
     if (editListId) {
-      const list = lists.find((l) => l.id === editListId);
-      await syncList({ ...list, name: listName.trim() });
+      await setDoc(doc(db, "listas_v4", editListId), { name: listName.trim() }, { merge: true });
     } else {
-      await syncList({ id: uid(), name: listName.trim(), items: [], createdAt: Date.now() });
+      const id = uid();
+      await setDoc(doc(db, "listas_v4", id), { name: listName.trim(), createdAt: Date.now() });
     }
     setShowListModal(false);
   };
 
   const archiveList = async (list, e) => {
     e.stopPropagation();
-    setArchived((prev) => [{ ...list, archivedAt: Date.now() }, ...prev]);
-    await removeList(list.id);
+    // busca itens para salvar no histórico
+    const snap = await getDocs(collection(db, "listas_v4", list.id, "itens"));
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    setArchived((prev) => [{ ...list, items, archivedAt: Date.now() }, ...prev]);
+    // apaga itens e lista
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(doc(db, "listas_v4", list.id));
+    await batch.commit();
   };
 
   const deleteListPermanently = async (id) => {
-    await removeList(id);
+    const snap = await getDocs(collection(db, "listas_v4", id, "itens"));
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    batch.delete(doc(db, "listas_v4", id));
+    await batch.commit();
     setConfirmDelete(null);
     if (screen === "list") setScreen("home");
   };
 
-  // ── Ações: itens (sem quantidade) ────────────────────────────────────────
+  // ── Ações: itens (cada um é documento separado) ───────────────────────────
   const openAddItem = () => {
     setEditItemId(null); setItemName(""); setItemCat("outros");
     setShowItemModal(true);
@@ -202,26 +243,43 @@ export default function App() {
     setShowItemModal(true);
     setTimeout(() => itemNameRef.current?.focus(), 120);
   };
+
   const saveItem = async () => {
-    if (!itemName.trim() || !activeList) return;
-    const newItem  = { id: editItemId || uid(), name: itemName.trim(), category: itemCat, done: false };
-    const items    = activeList.items || [];
-    const newItems = editItemId
-      ? items.map((i) => i.id === editItemId ? { ...newItem, done: i.done } : i)
-      : [...items, newItem];
-    await syncList({ ...activeList, items: newItems });
+    if (!itemName.trim() || !activeId) return;
+    const id = editItemId || uid();
+    // setDoc com merge: true → só atualiza os campos passados, não apaga outros
+    await setDoc(
+      doc(db, "listas_v4", activeId, "itens", id),
+      {
+        name: itemName.trim(),
+        category: itemCat,
+        done: false,
+        createdAt: editItemId ? undefined : Date.now(),
+      },
+      { merge: true }
+    );
     setShowItemModal(false);
   };
 
   const toggleItem = async (item) => {
-    const newItems = activeList.items.map((i) => i.id === item.id ? { ...i, done: !i.done } : i);
-    await syncList({ ...activeList, items: newItems });
+    // atualiza SÓ o campo "done" — sem risco de conflito com outros campos
+    await setDoc(
+      doc(db, "listas_v4", activeId, "itens", item.id),
+      { done: !item.done },
+      { merge: true }
+    );
   };
+
   const deleteItem = async (itemId) => {
-    await syncList({ ...activeList, items: activeList.items.filter((i) => i.id !== itemId) });
+    await deleteDoc(doc(db, "listas_v4", activeId, "itens", itemId));
   };
+
   const clearDone = async () => {
-    await syncList({ ...activeList, items: (activeList.items || []).filter((i) => !i.done) });
+    const batch = writeBatch(db);
+    activeItens.filter((i) => i.done).forEach((i) => {
+      batch.delete(doc(db, "listas_v4", activeId, "itens", i.id));
+    });
+    await batch.commit();
   };
 
   // ── Ações: categorias ─────────────────────────────────────────────────────
@@ -236,20 +294,41 @@ export default function App() {
     setNewCatLabel(""); setNewCatEmoji("🛍"); setNewCatColor("#22c55e");
     setShowCatModal(false);
   };
+
   const deleteCategory = (id) => {
     if (id === "outros") return;
     setCategories((prev) => prev.filter((c) => c.id !== id));
-    lists.forEach((l) => {
-      const changed = (l.items || []).some((i) => i.category === id);
-      if (changed) syncList({ ...l, items: l.items.map((i) => i.category === id ? { ...i, category: "outros" } : i) });
-    });
   };
 
+  // ── Histórico: duplicar ───────────────────────────────────────────────────
   const duplicateArchived = async (list) => {
-    const nl = { ...list, id: uid(), name: list.name + " (cópia)", createdAt: Date.now(), archivedAt: undefined, items: (list.items || []).map((i) => ({ ...i, id: uid(), done: false })) };
-    await syncList(nl);
+    const newId = uid();
+    const batch = writeBatch(db);
+    batch.set(doc(db, "listas_v4", newId), { name: list.name + " (cópia)", createdAt: Date.now() });
+    (list.items || []).forEach((item) => {
+      const itemId = uid();
+      batch.set(doc(db, "listas_v4", newId, "itens", itemId), {
+        name: item.name, category: item.category, done: false, createdAt: Date.now(),
+      });
+    });
+    await batch.commit();
     setScreen("home");
   };
+
+  // ── Subscrever itens de todas as listas para resumo na home ───────────────
+  useEffect(() => {
+    if (lists.length === 0) return;
+    const unsubs = lists.map((list) => {
+      const q = query(collection(db, "listas_v4", list.id, "itens"));
+      return onSnapshot(q, (snap) => {
+        setItens((prev) => ({
+          ...prev,
+          [list.id]: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+        }));
+      });
+    });
+    return () => unsubs.forEach((u) => u());
+  }, [lists.map((l) => l.id).join(",")]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -271,9 +350,9 @@ export default function App() {
             {screen === "history"    && "Histórico"}
             {screen === "categories" && "Categorias"}
           </div>
-          {screen === "list" && activeList && (() => {
-            const done  = (activeList.items || []).filter((i) => i.done).length;
-            const total = (activeList.items || []).length;
+          {screen === "list" && (() => {
+            const done  = activeItens.filter((i) => i.done).length;
+            const total = activeItens.length;
             return <div style={{ fontSize: 11, color: T.muted }}>{total - done} restante(s) · {done} comprado(s)</div>;
           })()}
         </div>
@@ -289,14 +368,13 @@ export default function App() {
         {screen === "list" && activeList && (
           <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(activeList); }} title="Excluir lista" style={{ background: T.danger + "18", border: `1px solid ${T.danger}44`, borderRadius: 10, padding: "7px 10px", fontSize: 14, cursor: "pointer" }}>🗑</button>
         )}
-
         <button onClick={() => setDark((d) => !d)} style={{ ...iconBtn, fontSize: 20 }}>{dark ? "☀️" : "🌙"}</button>
       </div>
 
       {/* Barra de progresso */}
-      {screen === "list" && activeList && (() => {
-        const total = (activeList.items || []).length;
-        const done  = (activeList.items || []).filter((i) => i.done).length;
+      {screen === "list" && (() => {
+        const total = activeItens.length;
+        const done  = activeItens.filter((i) => i.done).length;
         const pct   = total > 0 ? (done / total) * 100 : 0;
         return (
           <div style={{ height: 3, background: T.surface2 }}>
@@ -308,7 +386,7 @@ export default function App() {
       {/* ── CONTEÚDO ── */}
       <div style={{ padding: "16px 16px 120px" }}>
 
-        {loading && screen === "home" && (
+        {loadingLists && screen === "home" && (
           <div style={{ textAlign: "center", padding: "60px 20px", opacity: .5 }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>⏳</div>
             <div style={{ fontSize: 15, color: T.muted }}>Carregando listas...</div>
@@ -316,7 +394,7 @@ export default function App() {
         )}
 
         {/* ════ HOME ════ */}
-        {screen === "home" && !loading && (
+        {screen === "home" && !loadingLists && (
           <>
             {lists.length === 0 && (
               <div style={{ textAlign: "center", padding: "60px 20px", opacity: .5 }}>
@@ -326,15 +404,17 @@ export default function App() {
               </div>
             )}
             {lists.map((list, idx) => {
-              const total = list.items?.length || 0;
-              const done  = list.items?.filter((x) => x.done).length || 0;
-              const pct   = total > 0 ? (done / total) * 100 : 0;
+              const { total, done } = getListSummary(list.id);
+              const pct = total > 0 ? (done / total) * 100 : 0;
               return (
-                <div key={list.id} style={{ ...card, cursor: "pointer", animation: "fadeUp .3s ease both", animationDelay: idx * 40 + "ms" }} onClick={() => { setActiveId(list.id); setScreen("list"); }}>
+                <div key={list.id} style={{ ...card, cursor: "pointer", animation: "fadeUp .3s ease both", animationDelay: idx * 40 + "ms" }}
+                  onClick={() => { setActiveId(list.id); setScreen("list"); }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 17, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{list.name}</div>
-                      <div style={{ fontSize: 12, color: T.muted, marginTop: 3 }}>{total === 0 ? "Lista vazia" : `${total - done} restante(s) de ${total}`}</div>
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 3 }}>
+                        {total === 0 ? "Lista vazia" : `${total - done} restante(s) de ${total}`}
+                      </div>
                     </div>
                     <div style={{ display: "flex" }} onClick={(e) => e.stopPropagation()}>
                       <button onClick={(e) => openEditList(list, e)} style={iconBtn}>✏️</button>
@@ -354,18 +434,13 @@ export default function App() {
           </>
         )}
 
-        {/* ════ LISTA DE ITENS — agrupado por categoria sempre ════ */}
-        {screen === "list" && activeList && (() => {
-          const items   = activeList.items || [];
-          const pending = items.filter((i) => !i.done);
-          const done    = items.filter((i) => i.done);
+        {/* ════ LISTA DE ITENS ════ */}
+        {screen === "list" && (() => {
+          const pending = activeItens.filter((i) => !i.done);
+          const done    = activeItens.filter((i) => i.done);
 
-          // Agrupa respeitando a ordem das categorias
           const orderedGroups = categories
-            .map((c) => ({
-              cat: c,
-              items: pending.filter((i) => (i.category || "outros") === c.id),
-            }))
+            .map((c) => ({ cat: c, items: pending.filter((i) => (i.category || "outros") === c.id) }))
             .filter((g) => g.items.length > 0);
 
           const ItemRow = ({ item }) => {
@@ -389,7 +464,7 @@ export default function App() {
 
           return (
             <>
-              {items.length === 0 && (
+              {activeItens.length === 0 && (
                 <div style={{ textAlign: "center", padding: "60px 20px", opacity: .5 }}>
                   <div style={{ fontSize: 52, marginBottom: 12 }}>🛒</div>
                   <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Lista vazia</div>
@@ -397,7 +472,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* Grupos por categoria */}
               {orderedGroups.map(({ cat, items: catItems }) => (
                 <div key={cat.id} style={{ marginBottom: 4 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "16px 4px 6px" }}>
@@ -408,7 +482,6 @@ export default function App() {
                 </div>
               ))}
 
-              {/* Comprados */}
               {done.length > 0 && (
                 <div style={{ marginTop: 20 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 4px 6px" }}>
@@ -462,16 +535,14 @@ export default function App() {
           </>
         )}
 
-        {/* ════ CATEGORIAS — sem código hex ════ */}
+        {/* ════ CATEGORIAS ════ */}
         {screen === "categories" && (
           <>
             {categories.map((cat, idx) => (
               <div key={cat.id} style={{ ...card, display: "flex", alignItems: "center", gap: 14, animation: "fadeUp .3s ease both", animationDelay: idx * 30 + "ms" }}>
-                {/* Ícone com cor de fundo */}
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: cat.color + "30", border: `2px solid ${cat.color}66`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
                   {cat.label.split(" ")[0]}
                 </div>
-                {/* Nome + bolinha colorida (sem hex) */}
                 <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{ width: 10, height: 10, borderRadius: "50%", background: cat.color, flexShrink: 0 }} />
                   <span style={{ fontSize: 15, fontWeight: 600 }}>{cat.label}</span>
@@ -499,38 +570,18 @@ export default function App() {
         </Modal>
       )}
 
-      {/* ══ MODAL: NOVO / EDITAR ITEM (sem quantidade) ══ */}
+      {/* ══ MODAL: NOVO / EDITAR ITEM ══ */}
       {showItemModal && (
         <Modal onClose={() => setShowItemModal(false)} surfaceColor={T.surface}>
           <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 20 }}>{editItemId ? "Editar item" : "Novo item"}</div>
-
           <label style={sectionLabel}>Nome do item *</label>
-          <input
-            ref={itemNameRef}
-            value={itemName}
-            onChange={(e) => setItemName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && saveItem()}
-            placeholder="Ex: Leite, Frango, Detergente..."
-            style={inputStyle}
-          />
-
+          <input ref={itemNameRef} value={itemName} onChange={(e) => setItemName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveItem()} placeholder="Ex: Leite, Frango, Detergente..." style={inputStyle} />
           <label style={{ ...sectionLabel, marginBottom: 10 }}>Categoria</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
             {categories.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setItemCat(c.id)}
-                style={{
-                  padding: "6px 14px", borderRadius: 999, fontSize: 12,
-                  border: `1px solid ${itemCat === c.id ? c.color : T.border}`,
-                  background: itemCat === c.id ? c.color + "22" : T.surface2,
-                  color: itemCat === c.id ? c.color : T.muted,
-                  cursor: "pointer", transition: "all .15s",
-                }}
-              >{c.label}</button>
+              <button key={c.id} onClick={() => setItemCat(c.id)} style={{ padding: "6px 14px", borderRadius: 999, fontSize: 12, border: `1px solid ${itemCat === c.id ? c.color : T.border}`, background: itemCat === c.id ? c.color + "22" : T.surface2, color: itemCat === c.id ? c.color : T.muted, cursor: "pointer", transition: "all .15s" }}>{c.label}</button>
             ))}
           </div>
-
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setShowItemModal(false)} style={btnSecondary}>Cancelar</button>
             <button onClick={saveItem} style={btnPrimary}>{editItemId ? "Salvar ✓" : "Adicionar ✓"}</button>
@@ -542,32 +593,26 @@ export default function App() {
       {showCatModal && (
         <Modal onClose={() => setShowCatModal(false)} center surfaceColor={T.surface}>
           <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 20 }}>Nova categoria</div>
-
           <label style={sectionLabel}>Nome</label>
           <input value={newCatLabel} onChange={(e) => setNewCatLabel(e.target.value)} placeholder="Ex: Açougue, Pet Shop, Frios..." autoFocus style={inputStyle} />
-
           <label style={sectionLabel}>Emoji</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16, maxHeight: 130, overflowY: "auto", padding: 4 }}>
             {EMOJI_OPTIONS.map((e) => (
               <button key={e} onClick={() => setNewCatEmoji(e)} style={{ width: 38, height: 38, borderRadius: 10, border: `2px solid ${newCatEmoji === e ? T.accent : T.border}`, background: newCatEmoji === e ? T.accent + "22" : T.surface2, fontSize: 18, cursor: "pointer" }}>{e}</button>
             ))}
           </div>
-
           <label style={sectionLabel}>Cor</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
             {COLOR_OPTIONS.map((c) => (
               <button key={c} onClick={() => setNewCatColor(c)} style={{ width: 30, height: 30, borderRadius: "50%", background: c, border: `3px solid ${newCatColor === c ? T.text : "transparent"}`, cursor: "pointer", transition: "border .15s" }} />
             ))}
           </div>
-
-          {/* Preview */}
           <div style={{ background: T.surface2, borderRadius: 12, padding: "10px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 12, color: T.muted }}>Preview:</span>
             <span style={{ fontSize: 13, background: newCatColor + "22", color: newCatColor, borderRadius: 999, padding: "3px 12px", border: `1px solid ${newCatColor}44` }}>
               {newCatEmoji} {newCatLabel || "Nome da categoria"}
             </span>
           </div>
-
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setShowCatModal(false)} style={btnSecondary}>Cancelar</button>
             <button onClick={createCategory} style={btnPrimary}>Criar ✓</button>
