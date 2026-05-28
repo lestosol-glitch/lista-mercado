@@ -628,31 +628,33 @@ export default function App() {
               );
             })}
 
-            {/* Form novo/editar item do catálogo */}
-            {showCatalogoForm && (
-              <div style={{ background: T.surface2, borderRadius: 16, padding: 16, marginTop: 12 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>{editCatalogoId ? "Editar item" : "Novo item"}</div>
-                <input ref={catalogoNameRef} value={catalogoName} onChange={(e) => setCatalogoName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveCatalogo()} placeholder="Nome do item..." style={inputStyle} />
-                <div style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Categoria</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-                  {categories.map((c) => (
-                    <button key={c.id} onClick={() => setCatalogoCat(c.id)} style={{ padding: "5px 12px", borderRadius: 999, fontSize: 11, border: `1px solid ${catalogoCat === c.id ? c.color : T.border}`, background: catalogoCat === c.id ? c.color + "22" : T.surface, color: catalogoCat === c.id ? c.color : T.muted, cursor: "pointer" }}>{c.label}</button>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => { setShowCatalogoForm(false); setEditCatalogoId(null); }} style={{ ...btnSecondary, fontSize: 14 }}>Cancelar</button>
-                  <button onClick={saveCatalogo} style={{ ...btnPrimary, fontSize: 14 }}>{editCatalogoId ? "Salvar ✓" : "Adicionar ✓"}</button>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Botão novo item */}
-          {!showCatalogoForm && (
-            <div style={{ padding: "12px 20px 24px", borderTop: `1px solid ${T.border}` }}>
-              <button onClick={openNewCatalogo} style={{ ...btnPrimary, width: "100%", flex: "none" }}>+ Novo item no catálogo</button>
+          <div style={{ padding: "12px 20px 24px", borderTop: `1px solid ${T.border}` }}>
+            <button onClick={openNewCatalogo} style={{ ...btnPrimary, width: "100%", flex: "none" }}>+ Novo item no catálogo</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ══ MODAL: FORM CATÁLOGO (sobreposto, centralizado) ══ */}
+      {showCatalogoForm && (
+        <Modal onClose={() => { setShowCatalogoForm(false); setEditCatalogoId(null); }} center surfaceColor={T.surface}>
+          <div style={{ padding: 24 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 20 }}>{editCatalogoId ? "Editar item" : "Novo item no catálogo"}</div>
+            <label style={sectionLabel}>Nome do item *</label>
+            <input ref={catalogoNameRef} value={catalogoName} onChange={(e) => setCatalogoName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveCatalogo()} placeholder="Ex: Leite, Frango, Sabão..." autoFocus style={inputStyle} />
+            <label style={{ ...sectionLabel, marginBottom: 10 }}>Categoria</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
+              {categories.map((c) => (
+                <button key={c.id} onClick={() => setCatalogoCat(c.id)} style={{ padding: "6px 14px", borderRadius: 999, fontSize: 12, border: `1px solid ${catalogoCat === c.id ? c.color : T.border}`, background: catalogoCat === c.id ? c.color + "22" : T.surface2, color: catalogoCat === c.id ? c.color : T.muted, cursor: "pointer", transition: "all .15s" }}>{c.label}</button>
+              ))}
             </div>
-          )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setShowCatalogoForm(false); setEditCatalogoId(null); }} style={btnSecondary}>Cancelar</button>
+              <button onClick={saveCatalogo} style={btnPrimary}>{editCatalogoId ? "Salvar ✓" : "Adicionar ✓"}</button>
+            </div>
+          </div>
         </Modal>
       )}
 
